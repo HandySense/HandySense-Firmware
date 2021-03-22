@@ -1,4 +1,3 @@
-/// For tester
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
@@ -10,6 +9,7 @@
 #include <StreamUtils.h>
 #include "Adafruit_SHT31.h"
 #include <BH1750.h>
+#include "Max44009.h"
 #include "RTClib.h"
 #include "time.h"
 #include <WiFiClient.h>
@@ -114,7 +114,7 @@ const char* serverIndex =
 
 RTC_DS1307 rtc;
 DateTime _now;
-
+Max44009 myLux(0x4A);
 byte STX = 02;
 byte ETX = 03;
 
@@ -129,6 +129,14 @@ String mqtt_server ,
        password ,
        mqtt_port,
        ssid ;
+
+String mqtt_server_old ,
+       mqtt_Client_old ,
+       mqtt_password_old ,
+       mqtt_username_old ,
+       password_old ,
+       mqtt_port_old ,
+       ssid_old ;
 
 char msg[5000];
 char msg_Minsoil[100],
@@ -159,6 +167,7 @@ int hourNow,
     weekday;
 long current;
 struct tm timeinfo;
+String _data;
 
 /* Soil_moisture_sensor */
 #define Soil_moisture_sensorPin   A0
@@ -169,19 +178,23 @@ float sensorValue_soil_moisture   = 0.00,
 int LEDR = 26,  // LED 26= Blue
     LEDY = 27;  // LED 27 = Yenllow
 
-const unsigned long eventInterval       = 2 * 1000;
-const unsigned long _reconnectInterval  = 5000;
-unsigned long previousTime              = 0;
-unsigned long previousTime_offline      = 0;
+const unsigned long limitTime_connectWifi     = 2 * 60 * 1000;
+const unsigned long eventInterval             = 2 * 1000;
+const unsigned long _reconnectInterval        = 5 * 1000;
+const unsigned long limitTime_change          = 1 * 60 * 1000;
+unsigned long previousTime                    = 0;
+unsigned long previousTimeWifi                = 0;
+unsigned long previousTime_offline            = 0;
 
-const unsigned long eventInterval_publishData = 20;     // วินาที
-float difference_soil                         = 15.00,   // ค่าต่าง 5 เมื่อไรส่งทันที
+const unsigned long eventInterval_publishData = 10;   // วินาที, 60*5 ส่งทุก 5 นาที
+float difference_soil                         = 15.00,   // ค่าต่าง 15 % เมื่อไรส่งทันที
       difference_temp                         = 3.00;   // ค่าต่าง 3 เมื่อไรส่งทันที
 
 float soil      = 0.00,
       temp      = 0.00,
       humidity  = 0.00,
-      lux       = 0.00;
+      lux[2]    = {0.00, 0.00};
+int err;
 
 float soil_old  = 0.00,
       temp_old  = 0.00;
@@ -205,17 +218,18 @@ int t[20];
 
 #define Open_relay(j)    digitalWrite(relay_pin[j], HIGH)
 #define Close_relay(j)   digitalWrite(relay_pin[j], LOW)
-#define mode_setWifi                18
+
+/* PCB Black and Green */
+#define mode_Add_device             18
 #define connect_WifiStatusToBox     19
 #define connect_ClientStatusToBox   33
-/* new pcb */
-//#define mode_setWifi                2
+int relay_pin[4] = {25, 4, 16, 17};
+
+/* new PCB Red */
+//#define mode_setWifi                11
+//#define mode_Add_device             2
 //#define connect_WifiStatusToBox     15
 //#define connect_ClientStatusToBox   33
-
-
-int relay_pin[4] = {25, 4, 16, 17};
-/* new pcb */
 //int relay_pin[4] = {25, 4, 12, 13};
 
 unsigned int time_open[4][7][3] = {{{2000, 2000, 2000}, {2000, 2000, 2000}, {2000, 2000, 2000},
@@ -620,9 +634,7 @@ void ControlRelay_BysoilMinMax() {
           statusSoil_Close[k] = 1;
           sendStatus_RelaytoWeb(relayMinsoil_status[k], "on");
           manual_relayStatus[k] = "on";
-          String _data = "{\"data\": {\"temperature\":" + String(temp) +
-                         ",\"humidity\":" + String(humidity) + ",\"lux\":" +
-                         String(lux) + ",\"soil\":" + String(soil)  + "}}";
+          Get_dataToweb();
           digitalWrite(LEDY, 1);
           DEBUG_PRINT("soil < Min : "); DEBUG_PRINTLN(_data);
           _data.toCharArray(msg, (_data.length() + 1));
@@ -637,9 +649,7 @@ void ControlRelay_BysoilMinMax() {
           statusSoil_Close[k] = 2;
           sendStatus_RelaytoWeb(relayMaxsoil_status[k], "off");
           manual_relayStatus[k] = "off";
-          String _data = "{\"data\": {\"temperature\":" + String(temp) +
-                         ",\"humidity\":" + String(humidity) + ",\"lux\":" +
-                         String(lux) + ",\"soil\":" + String(soil)  + "}}";
+          Get_dataToweb();
           digitalWrite(LEDY, 1);
           DEBUG_PRINT("soil > Max : "); DEBUG_PRINTLN(_data);
           _data.toCharArray(msg, (_data.length() + 1));
@@ -666,9 +676,7 @@ void ControlRelay_BytempMinMax() {
           statusTemp_Close[g] = 2;
           sendStatus_RelaytoWeb(relayMintemp_status[g], "off");
           manual_relayStatus[g] = "off";
-          String _data = "{\"data\": {\"temperature\":" + String(temp) +
-                         ",\"humidity\":" + String(humidity) + ",\"lux\":" +
-                         String(lux) + ",\"soil\":" + String(soil)  + "}}";
+          Get_dataToweb();
           digitalWrite(LEDY, 1);
           DEBUG_PRINT("temp < Min : "); DEBUG_PRINTLN(_data);
           _data.toCharArray(msg, (_data.length() + 1));
@@ -683,9 +691,7 @@ void ControlRelay_BytempMinMax() {
           statusTemp_Close[g] = 1;
           sendStatus_RelaytoWeb(relayMintemp_status[g], "on");
           manual_relayStatus[g] = "on";
-          String _data = "{\"data\": {\"temperature\":" + String(temp) +
-                         ",\"humidity\":" + String(humidity) + ",\"lux\":" +
-                         String(lux) + ",\"soil\":" + String(soil)  + "}}";
+          Get_dataToweb();
           digitalWrite(LEDY, 1);
           DEBUG_PRINT("temp > Max : "); DEBUG_PRINTLN(_data);
           _data.toCharArray(msg, (_data.length() + 1));
@@ -711,6 +717,21 @@ void get_value_soil_moisture_sensor() {
   else if (soil >= 100) {
     soil = 100;
   }
+}
+
+void get_lux() {
+  lux[1] = myLux.getLux() / 1000;
+  err = myLux.getError();
+  if (err != 0) {
+    lux[1] = lux[0];
+  }
+  lux[0] = lux[1];
+}
+
+void Get_dataToweb() {
+  _data = "{\"data\": {\"temperature\":" + String(temp) +
+          ",\"humidity\":" + String(humidity) + ",\"lux\":" +
+          String(lux[1]) + ",\"soil\":" + String(soil)  + "}}";
 }
 
 /* -------- webSerialJSON function ------- */
@@ -794,26 +815,131 @@ void setAll_config() {
   }
 }
 
-void reset_wifi() {
+void Reset_wifi() {
+  for (int x = 0; x < 10; x++) {
+    digitalWrite(LEDY, 1);
+    delay(50);
+    digitalWrite(LEDY, 0);
+    delay(50);
+  }
+  ssid_old          = jsonDoc["ssid"].as<String>();
+  password_old      = jsonDoc["password"].as<String>();
+  jsonDoc["password"] = NULL;
+  jsonDoc["ssid"]     = NULL;
+  jsonDoc["command"]  = NULL;
+  EepromStream eeprom(0, 1024);
+  serializeJson(jsonDoc, eeprom);
+  eeprom.flush();
+  delay(1000);
+
+  int t = 0;
+  while (true) {
+    if (t >= 60000) { // 1 นาที
+      jsonDoc["password"] = password_old;
+      jsonDoc["ssid"]     = ssid_old;
+      EepromStream eeprom(0, 1024);
+      serializeJson(jsonDoc, eeprom);
+      eeprom.flush();
+      delay(1000);
+      WiFi.begin(ssid.c_str(), password.c_str());
+      digitalWrite(connect_WifiStatusToBox, LOW);
+      digitalWrite(LEDR, 1);
+      break;
+    }
+    t++;
+  }
+}
+
+void Add_device() {
   for (int x = 0; x < 10; x++) {
     digitalWrite(LEDR, 1);
     delay(50);
     digitalWrite(LEDR, 0);
     delay(50);
   }
-  jsonDoc["server"] = NULL;
-  jsonDoc["client"] = NULL;
-  jsonDoc["pass"] = NULL;
-  jsonDoc["user"] = NULL;
+  jsonDoc["server"]   = NULL;
+  jsonDoc["client"]   = NULL;
+  jsonDoc["pass"]     = NULL;
+  jsonDoc["user"]     = NULL;
   jsonDoc["password"] = NULL;
-  jsonDoc["port"] = NULL;
-  jsonDoc["ssid"] = NULL;
-  jsonDoc["command"] = NULL;
+  jsonDoc["port"]     = NULL;
+  jsonDoc["ssid"]     = NULL;
+  jsonDoc["command"]  = NULL;
   EepromStream eeprom(0, 1024);
   serializeJson(jsonDoc, eeprom);
   eeprom.flush();
   delay(1000);
   ESP.restart();
+}
+
+void Edit_device() {
+  for (int x = 0; x < 10; x++) {
+    digitalWrite(LEDR, 1);
+    delay(50);
+    digitalWrite(LEDR, 0);
+    delay(50);
+  }
+  mqtt_server_old   = jsonDoc["server"].as<String>();
+  mqtt_Client_old   = jsonDoc["client"].as<String>();
+  mqtt_password_old = jsonDoc["pass"].as<String>();
+  mqtt_username_old = jsonDoc["user"].as<String>();
+  password_old      = jsonDoc["password"].as<String>();
+  mqtt_port_old     = jsonDoc["port"].as<String>();
+  ssid_old          = jsonDoc["ssid"].as<String>();
+  jsonDoc["server"]   = NULL;
+  jsonDoc["client"]   = NULL;
+  jsonDoc["pass"]     = NULL;
+  jsonDoc["user"]     = NULL;
+  jsonDoc["password"] = NULL;
+  jsonDoc["port"]     = NULL;
+  jsonDoc["ssid"]     = NULL;
+  jsonDoc["command"]  = NULL;
+  EepromStream eeprom(0, 1024);
+  serializeJson(jsonDoc, eeprom);
+  eeprom.flush();
+  delay(1000);
+  for (int x = 0; x < 20; x++) {
+    digitalWrite(LEDY, 0);
+    digitalWrite(LEDR, 1);
+    delay(50);
+    digitalWrite(LEDY, 1);
+    digitalWrite(LEDR, 0);
+    delay(50);
+  }
+  Serial.write(START_PATTERN, 3);         // ส่งข้อมูลชนิดไบต์ ส่งตัวอักษรไปบนเว็บ
+  Serial.flush();                         // เครียบัฟเฟอร์ให้ว่าง
+  deserializeJson(jsonDoc, eeprom);       // คือการรับหรืออ่านข้อมูล jsonDoc ใน eeprom
+  Serial.write(STX);                      // 02 คือเริ่มส่ง
+  serializeJsonPretty(jsonDoc, Serial);   // ส่งข่อมูลของ jsonDoc ไปบนเว็บ
+  Serial.write(ETX);                      // 03 คือจบ
+
+  if (!jsonDoc.isNull()) {                      // ถ้าใน jsonDoc มีค่าแล้ว
+    WiFi.disconnect();
+    delay(1000);
+    if ( WiFi.status() != WL_CONNECTED) {       // ถ้ายังไม่เชื่อมต่อ wifi
+      while ( WiFi.status() != WL_CONNECTED) {  // ทำงาน ขณะที่ยังไม่เชื่อมต่อ
+        unsigned long currentTime = millis();
+        webSerialJSON();
+        delay(1000);
+        if (currentTime - previousTime >= limitTime_change) {
+          DEBUG_PRINTLN("1 min out");
+          jsonDoc["server"]   = mqtt_server_old;
+          jsonDoc["client"]   = mqtt_Client_old;
+          jsonDoc["pass"]     = mqtt_password_old;
+          jsonDoc["user"]     = mqtt_username_old;
+          jsonDoc["password"] = password_old;
+          jsonDoc["port"]     = mqtt_port_old;
+          jsonDoc["ssid"]     = ssid_old;
+          EepromStream eeprom(0, 1024);
+          serializeJson(jsonDoc, eeprom);
+          eeprom.flush();
+          delay(1000);
+          previousTime = currentTime;
+          ESP.restart();
+        }
+      }
+    }
+  }
 }
 
 void OTA_update() {
@@ -862,6 +988,9 @@ void OTA_update() {
 void setup() {
   Wire.begin();
   Serial.begin(115200);
+  Wire.setClock(50000);
+  Serial.print("Start max44009_test01 : ");
+  Serial.println(MAX44009_LIB_VERSION);
   //Wire.setClock(25000);
   lightMeter.begin();
   DEBUG_PRINTLN(F("BH1750 Test begin"));
@@ -886,6 +1015,8 @@ void setup() {
     digitalWrite(LEDR, 0);
     delay(50);
   }
+  digitalWrite(LEDY, 1);
+  digitalWrite(LEDR, 1);
   EEPROM.begin(4096);
   Serial.write(START_PATTERN, 3);         // ส่งข้อมูลชนิดไบต์ ส่งตัวอักษรไปบนเว็บ
   Serial.flush(); // เครียบัฟเฟอร์ให้ว่าง
@@ -897,27 +1028,36 @@ void setup() {
   Serial.write(ETX);                      // 03 คือจบ
   if (! sht31.begin(0x44)) {}
 
-  mqtt_server = jsonDoc["server"].as<String>();
-  mqtt_Client = jsonDoc["client"].as<String>();
+  mqtt_server   = jsonDoc["server"].as<String>();
+  mqtt_Client   = jsonDoc["client"].as<String>();
   mqtt_password = jsonDoc["pass"].as<String>();
   mqtt_username = jsonDoc["user"].as<String>();
-  password = jsonDoc["password"].as<String>();
-  mqtt_port = jsonDoc["port"].as<String>();
-  ssid = jsonDoc["ssid"].as<String>();
+  password      = jsonDoc["password"].as<String>();
+  mqtt_port     = jsonDoc["port"].as<String>();
+  ssid          = jsonDoc["ssid"].as<String>();
   WiFi.begin(ssid.c_str(), password.c_str());
   WiFi.waitForConnectResult();
   if (!jsonDoc.isNull()) {                      // ถ้าใน jsonDoc มีค่าแล้ว
     if ( WiFi.status() != WL_CONNECTED) {       // ถ้ายังไม่เชื่อมต่อ wifi
       while ( WiFi.status() != WL_CONNECTED) {  // ทำงาน ขณะที่ยังไม่เชื่อมต่อ
-        if (digitalRead(mode_setWifi) == HIGH) {
-          reset_wifi();
-        }
         unsigned long currentTime = millis();
         webSerialJSON();
+        DEBUG_PRINTLN("Connecting...");
         delay(1000);
+        if (digitalRead(mode_Add_device) == HIGH) {
+          DEBUG_PRINTLN("Reset device");
+          Add_device();
+        }
         if (currentTime - previousTime >= _reconnectInterval) {
+          DEBUG_PRINTLN("Connect wifi...");
           WiFi.begin(ssid.c_str(), password.c_str()); // ทำการเชื่อมต่อ wifi
           previousTime = currentTime;
+        }
+        if (currentTime - previousTimeWifi >= limitTime_connectWifi) {
+          DEBUG_PRINTLN("Working...");
+          previousTime = previousTimeWifi;
+          delay(1000);
+          break;
         }
       }
     }
@@ -985,7 +1125,9 @@ void loop() {
   delay(1);
   unsigned long currentTime = millis();
   if (currentTime - previousTime_offline >= eventInterval) {
-    lux = lightMeter.readLightLevel() / 1000; //(KLux)
+    //lux = lightMeter.readLightLevel() / 1000; //(KLux)
+    //lux[1] = myLux.getLux();
+    get_lux();
     temp = sht31.readTemperature();
     humidity = sht31.readHumidity();
     get_value_soil_moisture_sensor();
@@ -1000,9 +1142,7 @@ void loop() {
   ControlRelay_Bytimmer();
   ControlRelay_BysoilMinMax();
   ControlRelay_BytempMinMax();
-  String _data = "{\"data\": {\"temperature\":" + String(temp) +
-                 ",\"humidity\":" + String(humidity) + ",\"lux\":" +
-                 String(lux) + ",\"soil\":" + String(soil)  + "}}";
+  Get_dataToweb();
   if (configTime_net == 1) {
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer, nistTime);
     printLocalTime();
@@ -1053,7 +1193,17 @@ void loop() {
     client.publish("@shadow/data/update", msg);
     previousTime = currentTime;
   }
-  if (digitalRead(mode_setWifi) == HIGH) {
-    reset_wifi();
+  if (digitalRead(mode_Add_device) == HIGH) {
+    DEBUG_PRINTLN("Change wifi");
+    delay(1000);
+    while (true) {
+      if (digitalRead(mode_Add_device) == HIGH) {
+        DEBUG_PRINTLN("Edit device");
+        Edit_device();
+        DEBUG_PRINTLN("Edit device Done");
+        break;
+      }
+      //Reset_wifi();
+    }
   }
 }
