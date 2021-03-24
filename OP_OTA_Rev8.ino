@@ -186,7 +186,7 @@ unsigned long previousTime                    = 0;
 unsigned long previousTimeWifi                = 0;
 unsigned long previousTime_offline            = 0;
 
-const unsigned long eventInterval_publishData = 10;   // วินาที, 60*5 ส่งทุก 5 นาที
+const unsigned long eventInterval_publishData = 60*30;   // 30 วินาที, 60*5 ส่งทุก 5 นาที
 float difference_soil                         = 15.00,   // ค่าต่าง 15 % เมื่อไรส่งทันที
       difference_temp                         = 3.00;   // ค่าต่าง 3 เมื่อไรส่งทันที
 
