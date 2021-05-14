@@ -286,8 +286,8 @@ unsigned int time_close[4][7][3] = {{{2000, 2000, 2000}, {2000, 2000, 2000}, {20
   }
 };
 
-unsigned int Max_Soil[4], Min_Soil[4];
-unsigned int Max_Temp[4], Min_Temp[4];
+float Max_Soil[4], Min_Soil[4];
+float Max_Temp[4], Min_Temp[4];
 
 unsigned int statusTimer_open[4] = {1, 1, 1, 1};
 unsigned int statusTimer_close[4] = {1, 1, 1, 1};
