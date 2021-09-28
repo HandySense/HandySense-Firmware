@@ -11,6 +11,9 @@
      * [Timmer control](#timmer-control)
      * [Sensor control](#sensor-control)
    * [Read sensor](#read-sensor)
+     * [Temp and humid sensor](#temp-and-humid-sensor)
+     * [Light intensity sensor](#light-intensity-sensor)
+     * [Soil sensor](#soil-sensor)
    * [Send data](#send-data)
    * [Add device](#add-device)
    * [Multitasking](#multitasking)
@@ -217,7 +220,11 @@ int Mode(float* getdata) {
   }
   return maxValue;
 }
+```
 
+Temp and humid sensor
+---------------------
+```js
 /* ----------------------- Calculator sensor SHT31  --------------------------- */
 void Get_sht31() {
   float buffer_temp = 0;
@@ -289,7 +296,11 @@ void Get_sht31() {
     //digitalWrite(status_sht31_error, HIGH);
   }
 }
+```
 
+Light intensity sensor 
+---------------------
+```js
 /* ----------------------- Calculator sensor Max44009 --------------------------- */
 void Get_max44009() {
   float buffer_lux = 0;
@@ -331,7 +342,11 @@ void Get_max44009() {
     digitalWrite(status_max44009_error, LOW);
   }
 }
+```
 
+Soil sensor
+---------------------
+```js
 /* ----------------------- Calculator sensor Soil  --------------------------- */
 void Get_soil() {
   float buffer_soil = 0;
@@ -486,14 +501,103 @@ Multitasking
 ===========
 
 ```js
+/* --------- Auto Connect Wifi and server and setup value init ------------- */
+void TaskWifiStatus(void * WifiStatus) {
+  while (1) {
+    connectWifiStatus = cannotConnect;
+    WiFi.begin(ssid.c_str(), password.c_str());   
+     
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(100);
+      //DEBUG_PRINTLN("WIFI Not connect !!!");
+    }
 
+    connectWifiStatus = wifiConnected;
+    client.setServer(mqtt_server.c_str(), mqtt_port.toInt());
+    client.setCallback(callback);
+    timeClient.begin();
+
+    client.connect(mqtt_Client.c_str(), mqtt_username.c_str(), mqtt_password.c_str());
+    delay(100);
+
+    while (!client.connected() ) {
+      client.connect(mqtt_Client.c_str(), mqtt_username.c_str(), mqtt_password.c_str());
+      DEBUG_PRINTLN("NETPIE2020 can not connect");
+      delay(100);
+    }
+
+    if (client.connect(mqtt_Client.c_str(), mqtt_username.c_str(), mqtt_password.c_str())) {
+      connectWifiStatus = serverConnected;
+
+      DEBUG_PRINTLN("NETPIE2020 connected");
+      client.subscribe("@private/#");
+
+      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer, nistTime);
+      printLocalTime();
+      yearNow = timeinfo.tm_year + 1900;
+      monthNow = timeinfo.tm_mon + 1;
+      dayNow = timeinfo.tm_mday;
+      hourNow = timeinfo.tm_hour;
+      minuteNow = timeinfo.tm_min;
+      secondNow = timeinfo.tm_sec;
+      rtc.adjust(DateTime(yearNow, monthNow, dayNow, hourNow, minuteNow, secondNow));
+
+      OTA_update();
+    }
+    while (WiFi.status() == WL_CONNECTED) { // เชื่อมต่อ wifi แล้ว ไม่ต้องทำอะไรนอกจากส่งค่า
+      sendStatus_RelaytoWeb();
+      send_soilMinMax();
+      send_tempMinMax();   
+      delay(500);
+
+      if (!client.connected()) {
+        client.connect(mqtt_Client.c_str(), mqtt_username.c_str(), mqtt_password.c_str());
+        DEBUG_PRINTLN("NETPIE2020 not connect Server");
+        delay(100);
+      }
+      client.loop();
+      server.handleClient();
+      delay(1);
+    }
+  }
+}
+
+/* --------- Auto Connect Serial ------------- */
+void TaskWaitSerial(void * WaitSerial) {
+  while (1) {
+    if (Serial.available())   webSerialJSON();
+    delay(500);
+  }
+}
 ```
 
 Status led
 ===========
 
 ```js
-
+int buff_count_LED_serverConnected;
+void IRAM_ATTR Blink_LED() {
+  if (connectWifiStatus == editDeviceWifi) {
+    digitalWrite(LEDR, HIGH);
+    digitalWrite(connect_WifiStatusToBox, HIGH);
+    digitalWrite(LEDY, !digitalRead(LEDY));
+  } else  if (connectWifiStatus == cannotConnect) {
+    digitalWrite(LEDY, HIGH);
+    digitalWrite(LEDR, !digitalRead(LEDR));
+    digitalWrite(connect_WifiStatusToBox, HIGH);
+  } else if (connectWifiStatus == serverConnected) {
+    digitalWrite(LEDR, LOW);
+    digitalWrite(LEDY, LOW);
+    digitalWrite(connect_WifiStatusToBox, LOW);
+  } else if (connectWifiStatus == wifiConnected) {
+    buff_count_LED_serverConnected++;
+    if (buff_count_LED_serverConnected < 7) {
+      digitalWrite(LEDR, !digitalRead(LEDR));
+    } else if (buff_count_LED_serverConnected < 10) {
+      digitalWrite(LEDR, LOW);
+    } else buff_count_LED_serverConnected = 0;
+  }
+}
 ```
 
 # Open Hardware Facts
