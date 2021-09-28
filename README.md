@@ -15,8 +15,14 @@
      * [Light intensity sensor](#light-intensity-sensor)
      * [Soil sensor](#soil-sensor)
    * [Send data](#send-data)
+     * [Update data server](#update-data-server) 
+     * [Send status relay](#send-status-relay)
+     * [Send soil min max](#send-soil-min-max)
+     * [Send temp min max](#send-temp-min-max)
    * [Add device](#add-device)
    * [Multitasking](#multitasking)
+     * [Auto connect wifi](#auto-connect-wifi)
+     * [Auto connect serial](#auto-connect-serial)
    * [Status led](#status-led)
 <!--te-->
 
@@ -386,20 +392,9 @@ void Get_soil() {
 Send data
 ===========
 
+Update data server
+------------------
 ```js
-/* ----------------------- Sent Timer --------------------------- */
-void sent_dataTimer(String topic, String message) {
-  String _numberTimer = topic.substring(topic.length() - 2).c_str();
-  String _payload = "{\"data\":{\"value_timer";
-  _payload += _numberTimer;
-  _payload += "\":\"";
-  _payload += message;
-  _payload += "\"}}";
-  DEBUG_PRINT("incoming : ");
-  DEBUG_PRINTLN((char*)_payload.c_str());
-  client.publish("@shadow/data/update", (char*)_payload.c_str());
-}
-
 /* --------- UpdateData_To_Server --------- */
 void UpdateData_To_Server() {
   String DatatoWeb;
@@ -414,7 +409,11 @@ void UpdateData_To_Server() {
       DEBUG_PRINTLN(" Send Data Complete ");
     }
 }
+```
 
+Send status relay
+------------------
+```js
 /* --------- sendStatus_RelaytoWeb --------- */
 void sendStatus_RelaytoWeb() {
   String _payload;
@@ -430,7 +429,11 @@ void sendStatus_RelaytoWeb() {
     }
   }
 }
+```
 
+Send soil min max
+------------------
+```js
 /* --------- Respone soilMinMax toWeb --------- */
 void send_soilMinMax() {
   String soil_payload;
@@ -445,7 +448,11 @@ void send_soilMinMax() {
     }
   }
 }
+```
 
+Send temp min max
+------------------
+```js
 /* --------- Respone tempMinMax toWeb --------- */
 void send_tempMinMax() {
   String temp_payload;
@@ -500,6 +507,8 @@ void webSerialJSON() {
 Multitasking
 ===========
 
+Auto connect wifi
+-----------------
 ```js
 /* --------- Auto Connect Wifi and server and setup value init ------------- */
 void TaskWifiStatus(void * WifiStatus) {
@@ -561,7 +570,11 @@ void TaskWifiStatus(void * WifiStatus) {
     }
   }
 }
+```
 
+Auto connect serial
+-------------------
+```js
 /* --------- Auto Connect Serial ------------- */
 void TaskWaitSerial(void * WaitSerial) {
   while (1) {
