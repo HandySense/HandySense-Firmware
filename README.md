@@ -1,3 +1,4 @@
+![hds-logo_0](https://github.com/HandySense/HandySense/blob/main/hds-logo_0.jpg)
 # Firmware-HandySense-board
 ![](https://komarev.com/ghpvc/?username=your-github-Firmware-HandySense-board&color=brightgreen) 
 
@@ -8,8 +9,11 @@
    * [Functionals](#functionals)
      ฟังก์ชันหลักของ HandySense
      * [Manual control](#manual-control)
+       การสั่งงานผ่านสมาร์ตโฟน
      * [Timmer control](#timmer-control)
+       การตั้งเวลา
      * [Sensor control](#sensor-control)
+       การใช้ระบบเซนเซอร์
    * [Read sensor](#read-sensor)
      * [Temp and humid sensor](#temp-and-humid-sensor)
      * [Light intensity sensor](#light-intensity-sensor)
@@ -28,7 +32,8 @@
 
 Functionals
 ===========
-
+* HandySense มี 3 ฟังก์ชันหลัก
+![hds-logo](https://github.com/HandySense/HandySense/blob/main/%E0%B8%9F%E0%B8%B1%E0%B8%87%E0%B8%81%E0%B9%8C%E0%B8%8A%E0%B8%B1%E0%B8%99%E0%B8%81%E0%B8%B2%E0%B8%A3%E0%B8%97%E0%B8%B3%E0%B8%87%E0%B8%B2%E0%B8%99.PNG)
 
 Manual control
 ----------------------
@@ -207,6 +212,8 @@ void ControlRelay_BytempMinMax() {
 
 Read sensor
 ===========
+* HandySense จะใช้งานเซนเซอร์หลัก 3 ตัวได้แก่ 
+![SensorHS](https://github.com/HandySense/HandySense/blob/main/SensorHS.PNG)
 
 ```js
 /* ----------------------- Mode for calculator sensor i2c --------------------------- */
