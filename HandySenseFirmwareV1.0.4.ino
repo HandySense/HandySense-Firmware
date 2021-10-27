@@ -131,7 +131,6 @@ int hourNow,
     weekdayNow;
 
 struct tm timeinfo;
-String _data; // อาจจะไม่ได้ใช้
 
 // ประกาศตัวแปรสื่อสารกับ web App
 byte STX = 02;
@@ -161,6 +160,8 @@ int curentTimerError = 0;
 
 // ประกาศตัวแปรเรียกใช้ Max44009
 Max44009 myLux(0x4A);
+// ประกาศตัวแปรเรียกใช้ BH1750
+BH1750 lightMeter;
 
 // ประกาศตัวแปรเรียกใช้ SHT31
 Adafruit_SHT31 sht31 = Adafruit_SHT31();
@@ -187,7 +188,7 @@ unsigned long previousTime_brightness         = 0;
 
 // ประกาศตัวแปรกำหนดการนับเวลาเริ่มต้น
 unsigned long previousTime_Update_data        = 0;
-const unsigned long eventInterval_publishData = 2 * 60 * 1000;     // เช่น 2*60*1000 ส่งทุก 2 นาที
+const unsigned long eventInterval_publishData = 60 * 1000;     // เช่น 2*60*1000 ส่งทุก 2 นาที
 
 float difference_soil                         = 20.00,    // ค่าความชื้นดินแตกต่างกัน +-20 % เมื่อไรส่งค่าขึ้น Web app ทันที
       difference_temp                         = 4.00;     // ค่าอุณหภูมิแตกต่างกัน +- 4 C เมื่อไรส่งค่าขึ้น Web app ทันที
@@ -243,7 +244,7 @@ int t[20];
 /* new PCB Red */
 int relay_pin[4] = {25, 4, 12, 13};
 #define status_sht31_error          5
-#define status_max44009_error       18
+#define status_light_error          18
 #define status_soil_error           19
 
 // ตัวแปรเก็บค่าการตั้งเวลาทำงานอัตโนมัติ
@@ -305,10 +306,8 @@ int check_sendData_status = 0;
 int check_sendData_toWeb  = 0;
 int check_sendData_SoilMinMax = 0;
 int check_sendData_tempMinMax = 0;
-
-#define INTERVAL_MESSAGE 600000 //10 นาที
-#define INTERVAL_MESSAGE2 1500000 //1 ชม
-unsigned long time_restart = 0;
+int tpye_lux = 0;
+int buff_count_LED_serverConnected;
 
 /* ----------------------- OTA Function => One on One --------------------------- */
 void OTA_update() {
@@ -400,32 +399,13 @@ void sent_dataTimer(String topic, String message) {
 }
 
 /* --------- UpdateData_To_Server --------- */
-// void UpdateData_To_Server() {
-//   String DatatoWeb;
-//   char msgtoWeb[200];
-//   if (check_sendData_toWeb == 1) {
-//     DatatoWeb = "{\"data\": {\"temperature\":" + String(temp) +
-//                 ",\"humidity\":" + String(humidity) + ",\"lux\":" +
-//                 String(lux_44009) + ",\"soil\":" + String(soil)  + "}}";
-
-//     DEBUG_PRINT("DatatoWeb : "); DEBUG_PRINTLN(DatatoWeb);
-//     DatatoWeb.toCharArray(msgtoWeb, (DatatoWeb.length() + 1));
-//     if (client.publish("@shadow/data/update", msgtoWeb)) {
-//       check_sendData_toWeb = 0;
-//       DEBUG_PRINTLN(" Send Data Complete ");
-//     }
-//     digitalWrite(LEDY, HIGH);
-//   }
-// }
-
-/* --------- UpdateData_To_Server --------- */
 void UpdateData_To_Server() {
   String DatatoWeb;
     char msgtoWeb[200];
     DatatoWeb = "{\"data\": {\"temperature\":" + String(temp) +
                 ",\"humidity\":" + String(humidity) + ",\"lux\":" +
                 String(lux_44009) + ",\"soil\":" + String(soil)  + "}}";
-
+    
     DEBUG_PRINT("DatatoWeb : "); DEBUG_PRINTLN(DatatoWeb);
     DatatoWeb.toCharArray(msgtoWeb, (DatatoWeb.length() + 1));
     if (client.publish("@shadow/data/update", msgtoWeb)) {
@@ -576,8 +556,6 @@ void ControlRelay_Bytimmer() {
     dayofweek = _now.dayOfTheWeek() - 1;
     DEBUG_PRINT("USE RTC 2");
   }
-  //DEBUG_PRINT("curentTimer : "); DEBUG_PRINTLN(curentTimer);
-  /* check curentTimer => 0-1440 */
   if (curentTimer < 0 || curentTimer > 1440) {
     curentTimerError = 1;
     DEBUG_PRINT("curentTimerError : "); DEBUG_PRINTLN(curentTimerError);
@@ -586,7 +564,6 @@ void ControlRelay_Bytimmer() {
     if (dayofweek == -1) {
       dayofweek = 6;
     }
-    //DEBUG_PRINT("dayofweek   : "); DEBUG_PRINTLN(dayofweek);
     if (curentTimer != oldTimer) {
       for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 3; j++) {
@@ -606,9 +583,7 @@ void ControlRelay_Bytimmer() {
             DEBUG_PRINT("curentTimer : "); DEBUG_PRINTLN(curentTimer);
             DEBUG_PRINT("oldTimer    : "); DEBUG_PRINTLN(oldTimer);
           }
-          else if (time_open[i][dayofweek][j] == 3000 && time_close[i][dayofweek][j] == 3000) {
-            //        Close_relay(i);
-            //        DEBUG_PRINTLN(" Not check day, Not Working relay");
+          else if (time_open[i][dayofweek][j] == 3000 && time_close[i][dayofweek][j] == 3000) {            
           }
         }
       }
@@ -690,26 +665,22 @@ void ControlRelay_BysoilMinMax() {
   for (int k = 0; k < 4; k++) {
     if (Min_Soil[k] != 0 && Max_Soil[k] != 0) {
       if (soil < Min_Soil[k]) {
-        //DEBUG_PRINT("statusSoilMin"); DEBUG_PRINT(k); DEBUG_PRINT(" : "); DEBUG_PRINTLN(statusTemp[k]);
         if (statusSoil[k] == 0) {
           Open_relay(k);
           statusSoil[k] = 1;
           RelayStatus[k] = 1;
           check_sendData_status = 1;
           digitalWrite(LEDY, HIGH);
-          //check_sendData_toWeb = 1;
           DEBUG_PRINTLN("soil On");
         }
       }
       else if (soil > Max_Soil[k]) {
-        //DEBUG_PRINT("statusSoilMax"); DEBUG_PRINT(k); DEBUG_PRINT(" : "); DEBUG_PRINTLN(statusTemp[k]);
         if (statusSoil[k] == 1) {
           Close_relay(k);
           statusSoil[k] = 0;
           RelayStatus[k] = 0;
           check_sendData_status = 1;
           digitalWrite(LEDY, HIGH);
-          //check_sendData_toWeb = 1;
           DEBUG_PRINTLN("soil Off");
         }
       }
@@ -723,26 +694,22 @@ void ControlRelay_BytempMinMax() {
   for (int g = 0; g < 4; g++) {
     if (Min_Temp[g] != 0 && Max_Temp[g] != 0) {
       if (temp < Min_Temp[g]) {
-        //DEBUG_PRINT("statusTempMin"); DEBUG_PRINT(g); DEBUG_PRINT(" : "); DEBUG_PRINTLN(statusTemp[g]);
         if (statusTemp[g] == 1) {
           Close_relay(g);
           statusTemp[g] = 0;
           RelayStatus[g] = 0;
           check_sendData_status = 1;
           digitalWrite(LEDY, HIGH);
-          //check_sendData_toWeb = 1;
           DEBUG_PRINTLN("temp Off");
         }
       }
       else if (temp > Max_Temp[g]) {
-        //DEBUG_PRINT("statusTempMax"); DEBUG_PRINT(g); DEBUG_PRINT(" : "); DEBUG_PRINTLN(statusTemp[g]);
         if (statusTemp[g] == 0) {
           Open_relay(g);
           statusTemp[g] = 1;
           RelayStatus[g] = 1;
           check_sendData_status = 1;
           digitalWrite(LEDY, HIGH);
-          //check_sendData_toWeb = 1;
           DEBUG_PRINTLN("temp On");
         }
       }
@@ -770,105 +737,109 @@ int Mode(float* getdata) {
 
 /* ----------------------- Calculator sensor SHT31  --------------------------- */
 void Get_sht31() {
-  float buffer_temp = 0;
-  float buffer_hum  = 0;
-  float temp_cal    = 0;
-  int num_temp      = 0;
-  buffer_temp = sht31.readTemperature();
-  buffer_hum = sht31.readHumidity();
-  if (buffer_temp < -40 || buffer_temp > 125 || isnan(buffer_temp)) { // range -40 to 125 C
-    if (temp_error_count >= 10) {
-      temp_error = 1;
-      digitalWrite(status_sht31_error, LOW);
-      DEBUG_PRINT("temp_error : "); DEBUG_PRINTLN(temp_error);
-    } else {
-      temp_error_count++;
-    }
-    DEBUG_PRINT("temp_error_count  : "); DEBUG_PRINTLN(temp_error_count);
-  } else {
-    digitalWrite(status_sht31_error, HIGH);
-    ma_temp[4] = ma_temp[3];
-    ma_temp[3] = ma_temp[2];
-    ma_temp[2] = ma_temp[1];
-    ma_temp[1] = ma_temp[0];
-    ma_temp[0] = buffer_temp;
+   float buffer_temp = 0;
+   float buffer_hum  = 0;
+   float temp_cal    = 0;
+   int num_temp      = 0;
+   buffer_temp = sht31.readTemperature();
+   buffer_hum = sht31.readHumidity();
+   if (buffer_temp < -40 || buffer_temp > 125 || isnan(buffer_temp)) { // range -40 to 125 C
+     if (temp_error_count >= 10) {
+       temp_error = 1;
+       digitalWrite(status_sht31_error, LOW);
+       DEBUG_PRINT("temp_error : "); DEBUG_PRINTLN(temp_error);
+     } else {
+       temp_error_count++;
+     }
+     DEBUG_PRINT("temp_error_count  : "); DEBUG_PRINTLN(temp_error_count);
+   } else {
+     digitalWrite(status_sht31_error, HIGH);
+     ma_temp[4] = ma_temp[3];
+     ma_temp[3] = ma_temp[2];
+     ma_temp[2] = ma_temp[1];
+     ma_temp[1] = ma_temp[0];
+     ma_temp[0] = buffer_temp;
 
-    int mode_value_temp = Mode(ma_temp);
-    for (int i = 0; i < sizeof(ma_temp); i++) {
-      if (abs(mode_value_temp - ma_temp[i]) < 1) {
-        temp_cal = temp_cal + ma_temp[i];
-        num_temp++;
-      }
-    }
-    temp = temp_cal / num_temp;
-    temp_error = 0;
-    temp_error_count = 0;
+     int mode_value_temp = Mode(ma_temp);
+     for (int i = 0; i < sizeof(ma_temp); i++) {
+       if (abs(mode_value_temp - ma_temp[i]) < 1) {
+         temp_cal = temp_cal + ma_temp[i];
+         num_temp++;
+       }
+     }
+     temp = temp_cal / num_temp;
+     temp_error = 0;
+     temp_error_count = 0;
+   }
+   float hum_cal     = 0;
+   int num_hum       = 0;
+   if (buffer_hum < 0 || buffer_hum > 100  || isnan(buffer_hum)) { // range 0 to 100 %RH
+     if (hum_error_count >= 10) {
+       hum_error = 1;
+       digitalWrite(status_sht31_error, LOW);
+       DEBUG_PRINT("hum_error  : "); DEBUG_PRINTLN(hum_error);
+     } else {
+       hum_error_count++;
+     }
+     DEBUG_PRINT("hum_error_count  : "); DEBUG_PRINTLN(hum_error_count);
+   } else {
+     digitalWrite(status_sht31_error, HIGH);
+     ma_hum[4] = ma_hum[3];
+     ma_hum[3] = ma_hum[2];
+     ma_hum[2] = ma_hum[1];
+     ma_hum[1] = ma_hum[0];
+     ma_hum[0] = buffer_hum;
+
+     int mode_value_hum = Mode(ma_hum);
+     for (int j = 0; j < sizeof(ma_hum); j++) {
+       if (abs(mode_value_hum - ma_hum[j]) < 1) {
+         hum_cal = hum_cal + ma_hum[j];
+         num_hum++;
+       }
+     }
+     humidity = hum_cal / num_hum;
+     hum_error = 0;
+     hum_error_count = 0;
+   }
+ }
+
+/* ----------------------- Calculator light sensor --------------------------- */
+ void Get_light_sensor() {
+   float buffer_lux  = 0;
+   float lux_cal     = 0;
+   int num_lux       = 0;   
+  if(tpye_lux == 2){
+    buffer_lux = (myLux.getLux()* 2.15) / 1000;
+  } else {    
+    buffer_lux = (lightMeter.readLightLevel() * 2.15) / 1000; //(KLux)  
   }
-  float hum_cal     = 0;
-  int num_hum       = 0;
-  if (buffer_hum < 0 || buffer_hum > 100  || isnan(buffer_hum)) { // range 0 to 100 %RH
-    if (hum_error_count >= 10) {
-      hum_error = 1;
-      digitalWrite(status_sht31_error, LOW);
-      DEBUG_PRINT("hum_error  : "); DEBUG_PRINTLN(hum_error);
-    } else {
-      hum_error_count++;
-    }
-    DEBUG_PRINT("hum_error_count  : "); DEBUG_PRINTLN(hum_error_count);
-  } else {
-    digitalWrite(status_sht31_error, HIGH);
-    ma_hum[4] = ma_hum[3];
-    ma_hum[3] = ma_hum[2];
-    ma_hum[2] = ma_hum[1];
-    ma_hum[1] = ma_hum[0];
-    ma_hum[0] = buffer_hum;
-
-    int mode_value_hum = Mode(ma_hum);
-    for (int j = 0; j < sizeof(ma_hum); j++) {
-      if (abs(mode_value_hum - ma_hum[j]) < 1) {
-        hum_cal = hum_cal + ma_hum[j];
-        num_hum++;
-      }
-    }
-    humidity = hum_cal / num_hum;
-    hum_error = 0;
-    hum_error_count = 0;
-  }
-}
-
-/* ----------------------- Calculator sensor Max44009 --------------------------- */
-void Get_max44009() {
-  float buffer_lux  = 0;
-  float lux_cal     = 0;
-  int num_lux       = 0;
-  buffer_lux = myLux.getLux() / 1000;
   if (buffer_lux < 0 || buffer_lux > 188000 || isnan(buffer_lux)) { // range 0.045 to 188,000 lux
     if (lux_error_count >= 10) {
-      lux_error = 1;
-      digitalWrite(status_max44009_error, LOW);
-      DEBUG_PRINT("lux_error  : "); DEBUG_PRINTLN(lux_error);
+       lux_error = 1;
+       digitalWrite(status_light_error, LOW);
+       DEBUG_PRINT("lux_error  : "); DEBUG_PRINTLN(lux_error);
     } else {
-      lux_error_count++;
+       lux_error_count++;
     }
-    DEBUG_PRINT("lux_error_count  : "); DEBUG_PRINTLN(lux_error_count);
+     DEBUG_PRINT("lux_error_count  : "); DEBUG_PRINTLN(lux_error_count);
   } else {
-    digitalWrite(status_max44009_error, HIGH);
-    ma_lux[4] = ma_lux[3];
-    ma_lux[3] = ma_lux[2];
-    ma_lux[2] = ma_lux[1];
-    ma_lux[1] = ma_lux[0];
-    ma_lux[0] = buffer_lux;
+     digitalWrite(status_light_error, HIGH);
+     ma_lux[4] = ma_lux[3];
+     ma_lux[3] = ma_lux[2];
+     ma_lux[2] = ma_lux[1];
+     ma_lux[1] = ma_lux[0];
+     ma_lux[0] = buffer_lux;
 
-    int mode_value_lux = Mode(ma_lux);
-    for (int i = 0; i < sizeof(ma_lux); i++) {
-      if (abs(mode_value_lux - ma_lux[i]) < 1) {
-        lux_cal = lux_cal + ma_lux[i];
-        num_lux++;
-      }
-    }
-    lux_44009 = lux_cal / num_lux;
-    lux_error = 0;
-    lux_error_count = 0;
+     int mode_value_lux = Mode(ma_lux);
+     for (int i = 0; i < sizeof(ma_lux); i++) {
+       if (abs(mode_value_lux - ma_lux[i]) < 1) {
+         lux_cal = lux_cal + ma_lux[i];
+         num_lux++;
+       }
+     }
+     lux_44009 = lux_cal / num_lux;
+     lux_error = 0;
+     lux_error_count = 0;
   }
 }
 
@@ -906,14 +877,15 @@ void Get_soil() {
   }
 }
 
+/* ------------- Get local Time -------------- */
 void printLocalTime() {
   if (!getLocalTime(&timeinfo)) {
     DEBUG_PRINTLN("Failed to obtain time");
     return;
-  } //DEBUG_PRINTLN(&timeinfo, "%A, %d %B %Y %H:%M:%S");
+  }
 }
 
-/* ----------------------- Set All Config --------------------------- */
+/* -------------- Set All Config ------------- */
 void setAll_config() {
   for (int b = 0; b < 4; b++) {
     Max_Soil[b] = EEPROM.read(b + 2000);
@@ -972,15 +944,15 @@ void Delete_All_config() {
 void Edit_device_wifi() {
   connectWifiStatus = editDeviceWifi;
   EepromStream eeprom(0, 1024);
-  Serial.write(START_PATTERN, 3);               // ส่งข้อมูลชนิดไบต์ ส่งตัวอักษรไปบนเว็บ
-  Serial.flush();                               // เครียบัฟเฟอร์ให้ว่าง
-  deserializeJson(jsonDoc, eeprom);             // คือการรับหรืออ่านข้อมูล jsonDoc ใน eeprom
-  client_old = jsonDoc["client"].as<String>();  // เก็บค่า client เก่าเพื่อเช็คกับ client ใหม่ ในการ reset Wifi ไม่ให้ลบค่า Config อื่นๆ
-  Serial.write(STX);                            // 02 คือเริ่มส่ง
-  serializeJsonPretty(jsonDoc, Serial);         // ส่งข่อมูลของ jsonDoc ไปบนเว็บ
+  Serial.write(START_PATTERN, 3);               
+  Serial.flush();                               
+  deserializeJson(jsonDoc, eeprom);             
+  client_old = jsonDoc["client"].as<String>();  
+  Serial.write(STX);                            
+  serializeJsonPretty(jsonDoc, Serial);         
   Serial.write(ETX);
   delay(1000);
-  Serial.write(START_PATTERN, 3);               // ส่งข้อมูลชนิดไบต์ ส่งตัวอักษรไปบนเว็บ
+  Serial.write(START_PATTERN, 3);               
   Serial.flush();
   jsonDoc["server"]   = NULL;
   jsonDoc["client"]   = NULL;
@@ -990,9 +962,9 @@ void Edit_device_wifi() {
   jsonDoc["port"]     = NULL;
   jsonDoc["ssid"]     = NULL;
   jsonDoc["command"]  = NULL;
-  Serial.write(STX);                      // 02 คือเริ่มส่ง
-  serializeJsonPretty(jsonDoc, Serial);   // ส่งข่อมูลของ jsonDoc ไปบนเว็บ
-  Serial.write(ETX);                      // 03 คือจบ
+  Serial.write(STX);                      
+  serializeJsonPretty(jsonDoc, Serial);   
+  Serial.write(ETX);                      
 }
 
 /* -------- webSerialJSON function ------- */
@@ -1004,15 +976,14 @@ void webSerialJSON() {
     if (err == DeserializationError::Ok) {
       String command  =  jsonDoc["command"].as<String>();
       bool isValidData  =  !jsonDoc["client"].isNull();
-      if (command == "restart") {
-        delay(100);
-        ESP.restart();
+      if (command == "restart") {  
+        delay(100);      
+        ESP.restart();        
       }
       if (isValidData) {
         /* ------------------WRITING----------------- */
         serializeJson(jsonDoc, eeprom);
         eeprom.flush();
-        // ถ้าไม่เหมือนคือเพิ่มอุปกรณ์ใหม่ // ถ้าเหมือนคือการเปลี่ยน wifi
         if (client_old != jsonDoc["client"].as<String>()) {
           Delete_All_config();
         }
@@ -1026,7 +997,6 @@ void webSerialJSON() {
 }
 
 /* --------- อินเตอร์รัป แสดงสถานะการเชื่อม wifi ------------- */
-int buff_count_LED_serverConnected;
 void IRAM_ATTR Blink_LED() {
   if (connectWifiStatus == editDeviceWifi) {
     digitalWrite(LEDR, HIGH);
@@ -1060,6 +1030,27 @@ void setup() {
   EEPROM.begin(4096);
   Wire.begin();
   Wire.setClock(10000);
+
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    Serial.flush();
+    //abort();
+  }
+
+  if (! rtc.isrunning()) {
+    Serial.println("RTC is NOT running, let's set the time!");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  if(lightMeter.begin()){
+    tpye_lux = 1;
+    DEBUG_PRINTLN(F("BH1750 Test begin"));
+  } else {    
+    tpye_lux = 2;
+    DEBUG_PRINTLN(MAX44009_LIB_VERSION); 
+  } 
+  if (!sht31.begin(0x44)) {}
+  
   pinMode(Soil_moisture_sensorPin, INPUT);
   pinMode(relay_pin[0], OUTPUT);
   pinMode(relay_pin[1], OUTPUT);
@@ -1069,26 +1060,25 @@ void setup() {
   pinMode(LEDY, OUTPUT);
   pinMode(connect_WifiStatusToBox,    OUTPUT);
   pinMode(status_sht31_error,         OUTPUT);
-  pinMode(status_max44009_error,      OUTPUT);
+  pinMode(status_light_error,      OUTPUT);
   pinMode(status_soil_error,          OUTPUT);
   digitalWrite(connect_WifiStatusToBox, HIGH);
   digitalWrite(status_sht31_error,      HIGH);
-  digitalWrite(status_max44009_error,   HIGH);
+  digitalWrite(status_light_error,   HIGH);
   digitalWrite(status_soil_error,       HIGH);
   digitalWrite(relay_pin[0], LOW);
   digitalWrite(relay_pin[1], LOW);
   digitalWrite(relay_pin[2], LOW);
   digitalWrite(relay_pin[3], LOW);
-  if (! sht31.begin(0x44)) {}
   for (int x = 0; x < 20; x++) {
     digitalWrite(LEDY, 0);    digitalWrite(LEDR, 1);    delay(50);
     digitalWrite(LEDY, 1);    digitalWrite(LEDR, 0);    delay(50);
   }
   digitalWrite(LEDY, HIGH);     digitalWrite(LEDR, HIGH);
   Edit_device_wifi();
-  EepromStream eeprom(0, 1024);           // ประกาศ Object eepromSteam ที่ Address 0 ขนาด 1024 byte
-  deserializeJson(jsonDoc, eeprom);       // คือการรับหรืออ่านข้อมูล jsonDoc ใน eeprom
-  if (!jsonDoc.isNull()) {                      // ถ้าใน jsonDoc มีค่าแล้ว
+  EepromStream eeprom(0, 1024);           
+  deserializeJson(jsonDoc, eeprom);      
+  if (!jsonDoc.isNull()) {           
     mqtt_server   = jsonDoc["server"].as<String>();
     mqtt_Client   = jsonDoc["client"].as<String>();
     mqtt_password = jsonDoc["pass"].as<String>();
@@ -1098,7 +1088,7 @@ void setup() {
     ssid          = jsonDoc["ssid"].as<String>();
   }
   xTaskCreatePinnedToCore(TaskWifiStatus, "WifiStatus", 4096, NULL, 1, &WifiStatus, 1);
-  xTaskCreatePinnedToCore(TaskWaitSerial, "WaitSerial", 8192, NULL, 1, &WaitSerial, 1);
+  xTaskCreatePinnedToCore(TaskWaitSerial, "WaitSerial", 8192, NULL, 2, &WaitSerial, 1);
   setAll_config();
   delay(500);
   sensorValue_soil_moisture = analogRead(Soil_moisture_sensorPin);
@@ -1106,13 +1096,18 @@ void setup() {
   ma_soil[0] = ma_soil[1] = ma_soil[2] = ma_soil[3] = ma_soil[4] = ((-58.82) * voltageValue_soil_moisture) + 123.52;
   ma_temp[0] =  ma_temp[1] =  ma_temp[2] =  ma_temp[3] =  ma_temp[4] = sht31.readTemperature();
   ma_hum[0] = ma_hum[1] = ma_hum[2] = ma_hum[3] = ma_hum[4] = sht31.readHumidity();
-  ma_lux[0] = ma_lux[1] = ma_lux[2] = ma_lux[3] = ma_lux[4] = myLux.getLux() / 1000;
+  if(tpye_lux == 1){
+    ma_lux[0] = ma_lux[1] = ma_lux[2] = ma_lux[3] = ma_lux[4] = (myLux.getLux() * 2.15) / 1000;
+  } else {
+    ma_lux[0] = ma_lux[1] = ma_lux[2] = ma_lux[3] = ma_lux[4] = (lightMeter.readLightLevel() * 2.15) / 1000;  
+  } 
 }
 
 void loop() {
   client.loop();
   server.handleClient();
   delay(1);
+  
   unsigned long currentTime = millis();
   if (currentTime - previousTime_Temp_soil >= eventInterval) {
     ControlRelay_Bytimmer();
@@ -1128,43 +1123,25 @@ void loop() {
     previousTime_Temp_soil = currentTime;
   }
   if (currentTime - previousTime_brightness >= eventInterval_brightness) {
-    Get_max44009();
+    Get_light_sensor();
     previousTime_brightness = currentTime;
   }
   unsigned long currentTime_Update_data = millis();
   if (currentTime_Update_data - previousTime_Update_data >= (eventInterval_publishData)) {
-    //check_sendData_toWeb = 1;
     UpdateData_To_Server();
     previousTime_Update_data = currentTime_Update_data;
     soil_old = soil;
     temp_old = temp;
   }
-  //  if (abs(soil - soil_old) > difference_soil) {
-  //    digitalWrite(LEDY, HIGH);
-  //    check_sendData_toWeb = 1;
-  //    soil_old = soil;
-  //  }
-  //  if (abs(temp - temp_old) > difference_temp) {
-  //    digitalWrite(LEDY, HIGH);
-  //    check_sendData_toWeb = 1;
-  //    temp_old = temp;
-  //  }
 }
 
 /* --------- Auto Connect Wifi and server and setup value init ------------- */
-void TaskWifiStatus(void * pvParameters) {
+void TaskWifiStatus(void * WifiStatus) {
   while (1) {
     connectWifiStatus = cannotConnect;
     WiFi.begin(ssid.c_str(), password.c_str());   
      
     while (WiFi.status() != WL_CONNECTED) {
-      DEBUG_PRINTLN("WIFI Not connect !!!");
-
-      /* -- ESP Reset -- */
-      if (millis() - time_restart > INTERVAL_MESSAGE2) { // ผ่านไป 1 ชม. ยังไม่ได้เชื่อมต่อ Wifi ให้ Reset ตัวเอง
-        time_restart = millis();
-        ESP.restart();
-      }
       delay(100);
     }
 
@@ -1200,12 +1177,17 @@ void TaskWifiStatus(void * pvParameters) {
 
       OTA_update();
     }
-    while (WiFi.status() == WL_CONNECTED) { // เชื่อมต่อ wifi แล้ว ไม่ต้องทำอะไรนอกจากส่งค่า
-      //UpdateData_To_Server();
+    while (WiFi.status() == WL_CONNECTED) {
       sendStatus_RelaytoWeb();
       send_soilMinMax();
       send_tempMinMax();   
       delay(500);
+
+      if (!client.connected()) {
+        client.connect(mqtt_Client.c_str(), mqtt_username.c_str(), mqtt_password.c_str());
+        DEBUG_PRINTLN("NETPIE2020 not connect Server");
+        delay(100);
+      }
     }
   }
 }
