@@ -18,6 +18,7 @@
 #include <Update.h>
 
 #define HS_DEBUG
+#define version_1_6
 
 // ประกาศใช้ rtc
 RTC_DS1307 rtc;
@@ -79,7 +80,7 @@ float sensorValue_soil_moisture = 0.00,
       voltageValue_soil_moisture = 0.00,
       percent_soil_moisture = 0.00;
 
-#define SW_ADC_IO2 35
+#define _sw_pin 35
 #define value_mean 10
 #define sw_start  500
 
@@ -94,47 +95,33 @@ char msg_Minsoil[100],
 char msg_Mintemp[100],
      msg_Maxtemp[100];
 
-int LED_wifi = 26,  // LED 26= Blue => แสดงสถานะเชื่อมต่อ Wifi
-    LED_data = 27;    // LED 27 = Yenllow => แสดงสถานะส่งข้อมูล, โหมดเชื่อต่อ
+int LED_wifi = 26;  // LED 26= Blue => แสดงสถานะเชื่อมต่อ Wifi
+#if defined version_1_6
+    int LED_data = 27;    // LED 27 = Yenllow => แสดงสถานะส่งข้อมูล, โหมดเชื่อต่อ
+#elif defined version_1_7
+    int LED_data = 2;    // LED 27 = Yenllow => แสดงสถานะส่งข้อมูล, โหมดเชื่อต่อ
+#endif
 
-const unsigned long eventInterval = 2 * 1000;             // อ่านค่า temp และ soil sensor ทุก ๆ 2 วินาที
-const unsigned long eventInterval_brightness = 6 * 1000;  // อ่านค่า brightness sensor ทุก ๆ 6 วินาที
-unsigned long previousTime_Temp_soil = 0;
-unsigned long previousTime_brightness = 0;
-
-const unsigned long eventInterval_led = 1 * 1000;
-unsigned long previousTime_led = 0;
+const unsigned long eventInterval = 5 * 1000;             // อ่านค่า  sensor ทุก ๆ 5 วินาที
+unsigned long previousTime = 0;
 
 // ประกาศตัวแปรกำหนดการนับเวลาเริ่มต้น
 unsigned long previousTime_Update_data = 0;
-const unsigned long eventInterval_publishData = 60 * 1000;  // เช่น 2*60*1000 ส่งทุก 2 นาที
+const unsigned long eventInterval_publishData = 1 * 10 * 1000;  // เช่น 2*60*1000 ส่งทุก 2 นาที
 
-// ประกาศตัวแปรกำหนดการนับเวลา เชือม wifi หากเชื่อมไม่ได้นานเกิน 1 ชม.
-unsigned long previousTime_wifi = 0;
-const unsigned long eventInterval_wifi = 10 * 60 * 1000; // 10 นาที.
-
-float difference_soil = 20.00,  // ค่าความชื้นดินแตกต่างกัน +-20 % เมื่อไรส่งค่าขึ้น Web app ทันที
-      difference_temp = 4.00;       // ค่าอุณหภูมิแตกต่างกัน +- 4 C เมื่อไรส่งค่าขึ้น Web app ทันที
-float soil_old = 0.00,
-      temp_old = 0.00;
 
 // ประกาศตัวแปรสำหรับเก็บค่าเซ็นเซอร์
 float temp = 0;
-int temp_error = 0;
-int temp_error_count = 0;
-
 float humidity = 0;
-int hum_error = 0;
-int hum_error_count = 0;
+int sht31_error = 0;
 
-float lux_44009 = 0;
+float lux = 0;
 int lux_error = 0;
-int lux_error_count = 0;
+
 
 float soil = 0;
 int soil_error = 0;
 int soil_error_count = 0;
-int soil_disconnect = 0;
 
 // Array สำหรับทำ Movie Arg. ของค่าเซ็นเซอร์ทุก ๆ ค่า
 float ma_temp[5];
@@ -165,9 +152,9 @@ int t[20];
 
 /* new PCB Red */
 const int relay_pin[4] = {14, 12, 13, 15};
-#define status_sht31_error    32
-#define status_max44009_error 33
-#define status_soil_error     25
+#define sht31_error_pin    32
+#define lux_error_pin      33
+#define soil_error_pin     25
 
 // ตัวแปรเก็บค่าการตั้งเวลาทำงานอัตโนมัติ
 unsigned int time_open[4][7][3] = { { { 2000, 2000, 2000 }, { 2000, 2000, 2000 }, { 2000, 2000, 2000 }, { 2000, 2000, 2000 }, { 2000, 2000, 2000 }, { 2000, 2000, 2000 }, { 2000, 2000, 2000 } },
@@ -265,12 +252,11 @@ void UpdateData_To_Server() {
   String DatatoWeb;
   char msgtoWeb[200];
   if (soil_error == 1) soil = 0.00;
-  if (temp_error == 1) temp = 0.00;
-  if (hum_error == 1) humidity = 0.00;
-  if (lux_error == 1) lux_44009 = 0.00;
+  if (sht31_error == 1) {temp = 0.00;humidity = 0.00;}
+  if (lux_error == 1) lux = 0.00;
   DatatoWeb = "{\"data\": {\"temperature\":" + String(temp) +
               ",\"humidity\":" + String(humidity) + ",\"lux\":" +
-              String(lux_44009) + ",\"soil\":" + String(soil)  + "}}";
+              String(lux) + ",\"soil\":" + String(soil)  + "}}";
 
   Serial.print("DatatoWeb : "); Serial.println(DatatoWeb);
   DatatoWeb.toCharArray(msgtoWeb, (DatatoWeb.length() + 1));
@@ -639,7 +625,7 @@ void ControlRelay_BytempMinMax() {
     Serial.print("init_checkTemp : ");
     Serial.println(init_checkTemp[g]);
   }
-  if (temp_error == 1) {
+  if (sht31_error == 1) {
     for (int b = 0; b < 4; b++) {
       if (Max_Temp[b] > 0 ) {
         Close_relay(b);
@@ -653,7 +639,7 @@ void ControlRelay_BytempMinMax() {
       }
     }
   } else {
-    Serial.println("temp_error : 0 ..................................");
+    Serial.println("sht31_error : 0 ..................................");
   }
 }
 
@@ -677,115 +663,46 @@ int Mode(float* getdata) {
 
 /* ----------------------- Calculator sensor SHT31  --------------------------- */
 void Get_sht31() {
-  float buffer_temp = 0;
-  float buffer_hum = 0;
-  float temp_cal = 0;
-  int num_temp = 0;
-  buffer_temp = sht31.readTemperature();
-  buffer_hum = sht31.readHumidity();
-  if (buffer_temp < -40 || buffer_temp > 125 || isnan(buffer_temp)) {  // range -40 to 125 C
-    if (temp_error_count >= 10) {
-      temp_error = 1;
-      digitalWrite(status_sht31_error, HIGH);
-      Serial.print("temp_error : ");
-      Serial.println(temp_error);
-    } else {
-      temp_error_count++;
-    }
-    Serial.print("temp_error_count  : ");
-    Serial.println(temp_error_count);
-  } else {
+  if(!sht31.begin(0x44)) {
+    sht31_error = 1;
+    digitalWrite(sht31_error_pin, HIGH);
+  }else{
+   
     ma_temp[4] = ma_temp[3];
     ma_temp[3] = ma_temp[2];
     ma_temp[2] = ma_temp[1];
     ma_temp[1] = ma_temp[0];
-    ma_temp[0] = buffer_temp;
+    ma_temp[0] = sht31.readTemperature();
+    temp = (ma_temp[0]+ma_temp[1]+ma_temp[2]+ma_temp[3]+ma_temp[4])/5.0f;
 
-    int mode_value_temp = Mode(ma_temp);
-    for (int i = 0; i < sizeof(ma_temp); i++) {
-      if (abs(mode_value_temp - ma_temp[i]) < 1) {
-        temp_cal = temp_cal + ma_temp[i];
-        num_temp++;
-      }
-    }
-    temp = temp_cal / num_temp;
-    temp_error = 0;
-    temp_error_count = 0;
-    digitalWrite(status_sht31_error, LOW);
-  }
-  float hum_cal = 0;
-  int num_hum = 0;
-  if (buffer_hum < 0 || buffer_hum > 100 || isnan(buffer_hum)) {  // range 0 to 100 %RH
-    if (hum_error_count >= 10) {
-      hum_error = 1;
-      //digitalWrite(status_sht31_error, LOW);
-      Serial.print("hum_error  : ");
-      Serial.println(hum_error);
-    } else {
-      hum_error_count++;
-    }
-    Serial.print("hum_error_count  : ");
-    Serial.println(hum_error_count);
-  } else {
     ma_hum[4] = ma_hum[3];
     ma_hum[3] = ma_hum[2];
     ma_hum[2] = ma_hum[1];
     ma_hum[1] = ma_hum[0];
-    ma_hum[0] = buffer_hum;
-
-    int mode_value_hum = Mode(ma_hum);
-    for (int j = 0; j < sizeof(ma_hum); j++) {
-      if (abs(mode_value_hum - ma_hum[j]) < 1) {
-        hum_cal = hum_cal + ma_hum[j];
-        num_hum++;
-      }
-    }
-    humidity = hum_cal / num_hum;
-    hum_error = 0;
-    hum_error_count = 0;
-    //digitalWrite(status_sht31_error, HIGH);
+    ma_hum[0] = sht31.readHumidity();
+    humidity =  (ma_hum[0]+ma_hum[1]+ma_hum[2]+ma_hum[3]+ma_hum[4])/5.0f; 
+    sht31_error = 0;
+    digitalWrite(sht31_error_pin, LOW);
   }
 }
 
 /* ----------------------- Calculator sensor Max44009 --------------------------- */
-void Get_max44009() {
+void Get_bright() {
   float buffer_lux = 0;
   float lux_cal = 0;
   int num_lux = 0;
-  if (tpye_lux == 2) {
-    buffer_lux = (myLux.getLux() * 2.15) / 1000;
-  } else {
-    buffer_lux = (lightMeter.readLightLevel() * 2.15) / 1000; //(KLux)
-  }
-  if (buffer_lux < 0 || buffer_lux > 188000 || isnan(buffer_lux)) {  // range 0.045 to 188,000 lux
-    if (lux_error_count >= 10) {
-      lux_error = 1;
-      digitalWrite(status_max44009_error, HIGH);
-      Serial.print("lux_error  : ");
-      Serial.println(lux_error);
-    } else {
-      lux_error_count++;
-    }
-    Serial.print("lux_error_count  : ");
-    Serial.println(lux_error_count);
-  } else {
+  if(!lightMeter.begin()){
+    lux_error = 1;
+    digitalWrite(lux_error_pin, HIGH);
+  }else{
     ma_lux[4] = ma_lux[3];
     ma_lux[3] = ma_lux[2];
     ma_lux[2] = ma_lux[1];
     ma_lux[1] = ma_lux[0];
-    ma_lux[0] = buffer_lux;
-
-    int mode_value_lux = Mode(ma_lux);
-    for (int i = 0; i < sizeof(ma_lux); i++) {
-      if (abs(mode_value_lux - ma_lux[i]) < 1) {
-        lux_cal = lux_cal + ma_lux[i];
-        num_lux++;
-      }
-    }
-    lux_44009 = lux_cal / num_lux;
+    ma_lux[0] = (lightMeter.readLightLevel() * 2.15) / 1000; //(KLux)
+    lux = (ma_lux[0]+ma_lux[1]+ma_lux[2]+ma_lux[3]+ma_lux[4])/5.0f;
     lux_error = 0;
-    lux_error_count = 0;
-    digitalWrite(status_max44009_error, LOW);
+    digitalWrite(lux_error_pin, LOW);
   }
 }
 
@@ -795,19 +712,14 @@ int soil_disconnect_error = 20;
 void Get_soil() {
   float buffer_soil = 0;
   sensorValue_soil_moisture = analogRead(Soil_moisture_sensorPin);
-  buffer_soil = map(sensorValue_soil_moisture, 2400, 860, 0, 100);
-  //sensorValue_soil_moisture;/*((-55.82) * voltageValue_soil_moisture) + 113.52;*/
+  buffer_soil = map(sensorValue_soil_moisture, 2600, 1100, 0, 100);
   if (buffer_soil < 0 || buffer_soil > 100 || isnan(buffer_soil)) {  // range 0 to 100 %
     if (soil_error_count >= 10) {
       soil_error = 1;
-      digitalWrite(status_soil_error, HIGH);
-      Serial.print("soil_error : ");
-      Serial.println(soil_error);
+      digitalWrite(soil_error_pin, HIGH);
     } else {
       soil_error_count++;
     }
-    Serial.print("soil_error_count  : ");
-    Serial.println(soil_error_count);
   } else {
     ma_soil[4] = ma_soil[3];
     ma_soil[3] = ma_soil[2];
@@ -815,58 +727,32 @@ void Get_soil() {
     ma_soil[1] = ma_soil[0];
     ma_soil[0] = buffer_soil;
 
-    if ((abs(ma_soil[0] - ma_soil[1]) >= config_error)) {
-      Serial.print("abs01     : ");
-      Serial.println(abs(buffer_soil - ma_soil[0]));
-      soil_disconnect++;
-    }
-    if ((abs(ma_soil[2] - ma_soil[3]) >= config_error)) {
-      Serial.print("abs02     : ");
-      Serial.println(abs(ma_soil[0] - ma_soil[1]));
-      soil_disconnect++;
-    }
-    Serial.print("soil_disconnect : ");
-    Serial.println(soil_disconnect);
-
-    soil = (ma_soil[0] + ma_soil[1] + ma_soil[2] + ma_soil[3] + ma_soil[4]) / 5;
+    soil = (ma_soil[0] + ma_soil[1] + ma_soil[2] + ma_soil[3] + ma_soil[4]) / 5.0f;
     soil_error_count = 0;
-
-    if (soil_disconnect == 0) {
-      digitalWrite(status_soil_error, HIGH);
-      soil_error = 0;
-    } else {
-      if (soil_disconnect >= soil_disconnect_error) {
-        soil_disconnect = soil_disconnect_error;
-        soil_error = 1;
-        digitalWrite(status_soil_error, LOW);
-      }
-      soil_disconnect--;
-      if (soil_disconnect < 0) {
-        soil_disconnect = 0;
-      }
-    }
+    digitalWrite(soil_error_pin, LOW);
   }
 }
 
-int SW_ADC() {
-  int sensorValue_SW_ADC_IO2 = 0;
-  if (analogRead(SW_ADC_IO2) > sw_start) {
+int get_sw() {
+
+  int sensorValue_sw_pin = 0;
+  if (analogRead(_sw_pin) > sw_start) {
     delay(50);
-    if (analogRead(SW_ADC_IO2) > sw_start) {
+    if (analogRead(_sw_pin) > sw_start) {
       for (int i = 0; i <= value_mean; i++) {
-        int buffer_sensorValue_IO2 = analogRead(SW_ADC_IO2);
-        if (buffer_sensorValue_IO2 > sw_start) sensorValue_SW_ADC_IO2 += buffer_sensorValue_IO2;
+        int buffer_sensorValue = analogRead(_sw_pin);
+        if (buffer_sensorValue > sw_start) sensorValue_sw_pin += buffer_sensorValue;
         else return 0;
         delay(5);
       }
-      sensorValue_SW_ADC_IO2 = sensorValue_SW_ADC_IO2 / value_mean;
-      if (sensorValue_SW_ADC_IO2 > sw_start && sensorValue_SW_ADC_IO2 < 1072) {
+      sensorValue_sw_pin = sensorValue_sw_pin / value_mean;
+      if (sensorValue_sw_pin > sw_start && sensorValue_sw_pin < 1072) {
         return sw_1;
-      } else if (sensorValue_SW_ADC_IO2 > 1072 && sensorValue_SW_ADC_IO2 < 1585) {
+      } else if (sensorValue_sw_pin > 1072 && sensorValue_sw_pin < 1585) {
         return sw_2;
-      } else if (sensorValue_SW_ADC_IO2 > 1585 && sensorValue_SW_ADC_IO2 < 3010) {
+      } else if (sensorValue_sw_pin > 1585 && sensorValue_sw_pin < 3010) {
         return sw_3;
-      } else if (sensorValue_SW_ADC_IO2 > 3010) {
+      } else if (sensorValue_sw_pin > 3010) {
         return sw_4;
       }
     }
@@ -1044,22 +930,7 @@ void setup() {
   Wire.setClock(10000);
   Wire.begin();
 
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    Serial.flush();
-  }
-
-  if (lightMeter.begin()) {
-    tpye_lux = 1;
-    Serial.println(F("BH1750 Test begin"));
-  } else {
-    tpye_lux = 2;
-    Serial.println(MAX44009_LIB_VERSION);
-  }
-
-  if (!sht31.begin(0x44)) {}
-
-  pinMode(SW_ADC_IO2, INPUT);
+  pinMode(_sw_pin, INPUT);
   pinMode(Soil_moisture_sensorPin, INPUT);
   pinMode(relay_pin[0], OUTPUT);
   pinMode(relay_pin[1], OUTPUT);
@@ -1067,21 +938,27 @@ void setup() {
   pinMode(relay_pin[3], OUTPUT);
   pinMode(LED_wifi, OUTPUT);
   pinMode(LED_data, OUTPUT);
+  pinMode(sht31_error_pin, OUTPUT);
+  pinMode(lux_error_pin, OUTPUT);
+  pinMode(soil_error_pin, OUTPUT);
   digitalWrite(relay_pin[0], LOW);
   digitalWrite(relay_pin[1], LOW);
   digitalWrite(relay_pin[2], LOW);
   digitalWrite(relay_pin[3], LOW);
-
+  digitalWrite(sht31_error_pin, LOW);
+  digitalWrite(lux_error_pin, LOW);
+  digitalWrite(soil_error_pin, LOW);
+  
   for (int x = 0; x < 20; x++) {
-    digitalWrite(LED_data, 0);
-    digitalWrite(LED_wifi, 1);
-    delay(50);
-    digitalWrite(LED_data, 1);
-    digitalWrite(LED_wifi, 0);
-    delay(50);
+    digitalWrite(LED_data, 0);    digitalWrite(LED_wifi, 1);    delay(50);
+    digitalWrite(LED_data, 1);    digitalWrite(LED_wifi, 0);    delay(50);
   }
   digitalWrite(LED_data, HIGH);
   digitalWrite(LED_wifi, HIGH);
+  digitalWrite(sht31_error_pin, HIGH);
+  digitalWrite(lux_error_pin, HIGH);
+  digitalWrite(soil_error_pin, HIGH);
+  
   Edit_device_wifi();
   EepromStream eeprom(0, 1024);      // ประกาศ Object eepromSteam ที่ Address 0 ขนาด 1024 byte
   deserializeJson(jsonDoc, eeprom);  // คือการรับหรืออ่านข้อมูล jsonDoc ใน eeprom
@@ -1097,39 +974,28 @@ void setup() {
   xTaskCreatePinnedToCore(TaskWifiStatus, "WifiStatus", 8000, NULL, 1, &WifiStatus, 1);
   xTaskCreatePinnedToCore(TaskWaitSerial, "WaitSerial", 6000, NULL, 1, &WaitSerial, 1);
   setAll_config();
-  delay(500);
-  sensorValue_soil_moisture = analogRead(Soil_moisture_sensorPin);
-  voltageValue_soil_moisture = (sensorValue_soil_moisture * 3.3) / (4095.00);
-  ma_soil[0] = ma_soil[1] = ma_soil[2] = ma_soil[3] = ma_soil[4] = ((-58.82) * voltageValue_soil_moisture) + 123.52;
-  ma_temp[0] = ma_temp[1] = ma_temp[2] = ma_temp[3] = ma_temp[4] = sht31.readTemperature();
-  ma_hum[0] = ma_hum[1] = ma_hum[2] = ma_hum[3] = ma_hum[4] = sht31.readHumidity();
-  if (tpye_lux == 1) {
-    ma_lux[0] = ma_lux[1] = ma_lux[2] = ma_lux[3] = ma_lux[4] = (myLux.getLux() * 2.15) / 1000;
-  } else {
-    ma_lux[0] = ma_lux[1] = ma_lux[2] = ma_lux[3] = ma_lux[4] = (lightMeter.readLightLevel() * 2.15) / 1000;
-  }
+  for(int i = 0 ; i < 4 ; i++){Get_bright(); Get_soil(); Get_sht31(); }
 }
 
 void loop() {
-  int SW_Manual = SW_ADC();
+
+  int SW_Manual = get_sw();
   if (SW_Manual > 0) {
     delay(100);
     status_manual[SW_Manual - 1] = 0;
     if (RelayStatus[SW_Manual - 1] == 1) ControlRelay_Bymanual(SW_Manual - 1, "off");
     else ControlRelay_Bymanual(SW_Manual - 1, "on");
-    while (SW_ADC() > 0) delay(1);
+    while (get_sw() > 0) delay(1);
   }
 
   unsigned long currentTime = millis();
-  if (currentTime - previousTime_Temp_soil >= eventInterval) {
+  if (currentTime - previousTime > eventInterval) {
+    Get_bright();
+    Get_soil();
+    Get_sht31();
     ControlRelay_Bytimmer();
-
-    if (soil_error == 0) {
-      ControlRelay_BysoilMinMax();
-    }
-    if (temp_error == 0) {
-      ControlRelay_BytempMinMax();
-    }
+    if (soil_error == 0) ControlRelay_BysoilMinMax();
+    if (sht31_error == 0) ControlRelay_BytempMinMax();
 
     Serial.println("");
     Serial.print("Temp : ");
@@ -1139,7 +1005,7 @@ void loop() {
     Serial.print(humidity);
     Serial.print(" %RH, ");
     Serial.print("Brightness : ");
-    Serial.print(lux_44009);
+    Serial.print(lux);
     Serial.print(" Klux, ");
     Serial.print("Soil  : ");
     Serial.print(soil);
@@ -1148,42 +1014,37 @@ void loop() {
     Serial.print(curentTimer);
     Serial.println("");
 
-    previousTime_Temp_soil = currentTime;
-  }
-  if (currentTime - previousTime_brightness >= eventInterval_brightness) {
-    Get_max44009();
-    if (temp_error == 1 || lux_error == 1) {
-      byte error, address;
-      for (address = 1; address < 127; address++ ) {
-        Wire.beginTransmission(address);
-        error = Wire.endTransmission();
-        if (error == 0) {
-          Serial.print("I2C device found at address 0x");
-          if (address < 16) {
-            Serial.print("0");
-          }
-          Serial.println(address, DEC);
-          if (address == 68) {
-            temp_error = 0;
-          }
-          if (address == 74) {
-            lux_error = 0;
-          }
-        }
+    previousTime = currentTime;
+#ifdef HS_DEBUG
+    byte error, address;
+    int nDevices;
+     
+    Serial.println("Scanning...");
+ 
+    nDevices = 0;
+    for(address = 1; address < 127; address++ ) {
+   
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission(); 
+    if (error == 0)    {
+      Serial.print("I2C device found at address 0x");
+      if (address<16)
+        Serial.print("0");
+        Serial.print(address,HEX);
+        Serial.println("  !"); 
+        nDevices++;
       }
+      else if (error==4)
+      {
+        Serial.print("Unknown error at address 0x");
+        if (address<16)  Serial.print("0");
+          Serial.println(address,HEX);
+      }    
     }
-    if (soil_error == 1) {
-      Get_soil();
-    }
-    previousTime_brightness = currentTime;
-  }
-  unsigned long currentTime_Update_data = millis();
-  if (currentTime_Update_data - previousTime_Update_data >= (eventInterval_publishData)) {
-    UpdateData_To_Server();
-    previousTime_Update_data = currentTime_Update_data;
-    soil_old = soil;
-    temp_old = temp;
-  }
+    if (nDevices == 0)    Serial.println("No I2C devices found\n");
+    else                  Serial.println("done\n"); 
+#endif
+  }  
   client.loop();
   delay(10);
 }
@@ -1192,9 +1053,11 @@ void loop() {
 void TaskWifiStatus(void* pvParameters) {
   while (1) {
     connectWifiStatus = cannotConnect;
-    do {
-      WiFi.begin(ssid.c_str(), password.c_str());
-      Serial.println("WIFI Conneting...");
+    WiFi.begin(ssid.c_str(), password.c_str());
+    do {      
+      Serial.print("ssid = ");Serial.print(ssid.c_str());
+      Serial.print(" pass = ");Serial.print(password.c_str());
+      Serial.println(" WIFI Conneting...");
       delay(4000);
     } while (WiFi.status() != WL_CONNECTED);
 
@@ -1221,6 +1084,11 @@ void TaskWifiStatus(void* pvParameters) {
       delay(2000);
     }
     while (WiFi.status() == WL_CONNECTED) {
+      unsigned long currentTime_Update_data = millis();
+      if (currentTime_Update_data - previousTime_Update_data > (eventInterval_publishData)) {
+        UpdateData_To_Server();
+        previousTime_Update_data = currentTime_Update_data;
+      }
       sendStatus_RelaytoWeb();
       send_soilMinMax();
       send_tempMinMax();
